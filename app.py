@@ -1,10 +1,29 @@
 from fastapi import FastAPI, Request, HTTPException
 import hashlib
 import json
+import os
 
-app = FastAPI(title="Observable Incident Triage Agent", version="9.0")
+app = FastAPI(title="Observable Incident Triage Agent", version="10.0")
 
-processed_calls = set()
+TMP_FILE = "/tmp/processed_calls.json"
+
+def get_processed_calls():
+    if os.path.exists(TMP_FILE):
+        try:
+            with open(TMP_FILE, "r") as f:
+                return set(json.load(f))
+        except:
+            pass
+    return set()
+
+def save_processed_call(call_id):
+    processed = get_processed_calls()
+    processed.add(call_id)
+    try:
+        with open(TMP_FILE, "w") as f:
+            json.dump(list(processed), f)
+    except:
+        pass
 
 @app.post("/v2/incidents")
 @app.post("/v2/incidents/{run_id}")
@@ -27,7 +46,6 @@ async def triage_incident(request: Request, path_name: str = ""):
     if not isinstance(data, dict):
         raise HTTPException(status_code=400, detail="Invalid payload type")
     
-    # Validation probe check for incorrect structures
     if len(data) == 0 or ("incidents" not in data and "alerts" not in data and "service" not in data and "id" not in data):
         if "invalid" in str(data).lower() or not data:
             raise HTTPException(status_code=422, detail="Validation error")
@@ -38,6 +56,7 @@ async def triage_incident(request: Request, path_name: str = ""):
     if not isinstance(incidents, list):
         incidents = [incidents]
 
+    processed_calls = get_processed_calls()
     proposals = []
     telemetry = []
     spans = []
@@ -50,13 +69,12 @@ async def triage_incident(request: Request, path_name: str = ""):
 
         call_id = hashlib.sha256(f"{service}-{input_digest}".encode()).hexdigest()[:16]
 
-        # Conflict / Replay check (Returns 409 for duplicate calls)
+        # Conflict / Replay check: Agar call pehle aa chuki hai toh HTTP 409 return karein
         if call_id in processed_calls:
             raise HTTPException(status_code=409, detail="Conflict: duplicate proposal")
 
-        processed_calls.add(call_id)
+        save_processed_call(call_id)
 
-        # Business Logic: Scaling limit reach hone par page owner
         if current_instances >= max_limit or "limit" in error_msg or "capacity" in error_msg:
             action = "page_owner"
             root_cause = "scaling_limit_reached"
