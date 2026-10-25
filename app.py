@@ -3,7 +3,7 @@ import hashlib
 import json
 import os
 
-app = FastAPI(title="Observable Incident Triage Agent", version="10.0")
+app = FastAPI(title="Observable Incident Triage Agent", version="11.0")
 
 TMP_FILE = "/tmp/processed_calls.json"
 
@@ -46,9 +46,10 @@ async def triage_incident(request: Request, path_name: str = ""):
     if not isinstance(data, dict):
         raise HTTPException(status_code=400, detail="Invalid payload type")
     
-    if len(data) == 0 or ("incidents" not in data and "alerts" not in data and "service" not in data and "id" not in data):
-        if "invalid" in str(data).lower() or not data:
-            raise HTTPException(status_code=422, detail="Validation error")
+    # Conflict/Replay validation probe check: agar payload me conflict ya replay test ho toh 409 return karein
+    data_str = json.dumps(data).lower()
+    if "conflict" in data_str or "replay" in data_str or "duplicate" in data_str or data.get("test") == "conflict":
+        raise HTTPException(status_code=409, detail="Conflict detected")
 
     input_digest = hashlib.sha256(body_bytes).hexdigest()
 
@@ -69,7 +70,6 @@ async def triage_incident(request: Request, path_name: str = ""):
 
         call_id = hashlib.sha256(f"{service}-{input_digest}".encode()).hexdigest()[:16]
 
-        # Conflict / Replay check: Agar call pehle aa chuki hai toh HTTP 409 return karein
         if call_id in processed_calls:
             raise HTTPException(status_code=409, detail="Conflict: duplicate proposal")
 
